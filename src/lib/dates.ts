@@ -1,4 +1,4 @@
-import type { DateKey, Period, WeekStart } from '../types';
+import type { DateKey, Goal, Period, WeekStart } from '../types';
 
 const KEY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -168,8 +168,21 @@ export function currentPeriodName(period: Period): string {
   return { day: 'today', week: 'this week', month: 'this month', year: 'this year' }[period];
 }
 
-/** "1× per day", "3× per week" */
-export function goalText(count: number, period: Period): string {
+export const isLimit = (goal: Goal): boolean => goal.kind === 'atMost';
+
+/** Allowed goal counts: 1..max for targets, 0..max-1 for limits (a limit of "every day" means nothing). */
+export function goalCountRange(period: Period, limit: boolean): { min: number; max: number } {
+  const max = maxGoalCount(period);
+  return limit ? { min: 0, max: max - 1 } : { min: 1, max };
+}
+
+/** "Every day", "3× per week", "At most 2× per month", "Never", "None per week" */
+export function goalText(goal: Goal): string {
+  const { count, period } = goal;
+  if (isLimit(goal)) {
+    if (count === 0) return period === 'day' ? 'Never' : `None per ${period}`;
+    return `At most ${count}× per ${period}`;
+  }
   return period === 'day' ? 'Every day' : `${count}× per ${period}`;
 }
 

@@ -4,6 +4,7 @@ A small, phone-first habit tracker that runs entirely in your browser. No accoun
 your data lives in the browser's local storage on your device.
 
 - Define your own habits, each with a goal: every day, or _N_ times per week / month / year
+- Or set a limit for things to cut back on: at most _N_ times per week / month / year, or never
 - Tap to check off today, or step back to fill in earlier days
 - Month calendar: see every habit at a glance, or pick one habit and tap days to fill in history
 - Streaks, progress toward the current period's goal, a calendar history, and per-period charts

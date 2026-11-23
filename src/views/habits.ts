@@ -3,7 +3,7 @@ import { goBack, navigate } from '../router';
 import { store } from '../state';
 import { PERIODS } from '../types';
 import type { Habit, Period } from '../types';
-import { goalText, maxGoalCount } from '../lib/dates';
+import { goalCountRange, goalText, isLimit } from '../lib/dates';
 import { h, svgIcon } from '../ui/dom';
 import { ICONS } from '../ui/icons';
 import { HUES, hueStyle, nextHue } from '../ui/palette';
@@ -29,7 +29,7 @@ function habitRow(habit: Habit, index: number, total: number) {
         'span',
         { class: 'text' },
         h('div', { class: 'name' }, habit.name),
-        h('div', { class: 'goal' }, goalText(habit.goal.count, habit.goal.period)),
+        h('div', { class: 'goal' }, goalText(habit.goal)),
       ),
     ),
     h(
@@ -122,6 +122,7 @@ export const habitFormView: View = (root, [id]) => {
     color: existing?.color ?? nextHue(store.data.habits.map((x) => x.color)),
     count: existing?.goal.count ?? 1,
     period: existing?.goal.period ?? ('day' as Period),
+    limit: existing ? isLimit(existing.goal) : false,
   };
 
   // --- name
@@ -221,21 +222,48 @@ export const habitFormView: View = (root, [id]) => {
     svgIcon(ICONS.plus),
   );
   const stepper = h('div', { class: 'stepper' }, minus, countEl, plus, unitEl);
+  const kindSeg = h('div', { class: 'segmented kind-seg', role: 'radiogroup', 'aria-label': 'Goal type' });
   const periodSeg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Per' });
   const goalHint = h('div', { class: 'hint' });
 
+  /** Starting limit when switching to a limit goal, per period. */
+  const LIMIT_DEFAULT: Record<Period, number> = { day: 0, week: 2, month: 4, year: 12 };
+
   function setCount(n: number) {
-    state.count = Math.max(1, Math.min(maxGoalCount(state.period), n));
+    state.count = n;
     renderGoal();
   }
   function renderGoal() {
-    const max = maxGoalCount(state.period);
-    state.count = Math.min(state.count, max);
+    const { min, max } = goalCountRange(state.period, state.limit);
+    state.count = Math.max(min, Math.min(max, state.count));
     stepper.hidden = state.period === 'day';
     countEl.textContent = String(state.count);
     unitEl.textContent = `${state.count === 1 ? 'time' : 'times'} per ${state.period}`;
-    minus.disabled = state.count <= 1;
+    minus.disabled = state.count <= min;
     plus.disabled = state.count >= max;
+    kindSeg.replaceChildren(
+      ...([
+        [false, 'Build'],
+        [true, 'Limit'],
+      ] as const).map(([limit, label]) =>
+        h(
+          'button',
+          {
+            type: 'button',
+            role: 'radio',
+            'aria-checked': String(state.limit === limit),
+            onClick: () => {
+              if (state.limit === limit) return;
+              state.limit = limit;
+              // Pick a sensible starting point when flipping between a target and a limit.
+              state.count = limit ? LIMIT_DEFAULT[state.period] : 1;
+              renderGoal();
+            },
+          },
+          label,
+        ),
+      ),
+    );
     periodSeg.replaceChildren(
       ...PERIODS.map((p) =>
         h(
@@ -245,6 +273,8 @@ export const habitFormView: View = (root, [id]) => {
             role: 'radio',
             'aria-checked': String(state.period === p),
             onClick: () => {
+              // A daily goal has a fixed count, so leaving "Day" starts from a sensible default.
+              if (state.period === 'day' && state.limit) state.count = LIMIT_DEFAULT[p];
               state.period = p;
               renderGoal();
             },
@@ -253,11 +283,18 @@ export const habitFormView: View = (root, [id]) => {
         ),
       ),
     );
-    goalHint.textContent =
-      state.period === 'day'
+    const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
+    goalHint.textContent = state.limit
+      ? state.count === 0
+        ? `Avoid it. Check it off on any day you do it anyway.`
+        : `Keep it to ${days(state.count)} or fewer each ${state.period}. Check it off on days you do it.`
+      : state.period === 'day'
         ? 'Do it every day.'
         : `Do it on ${state.count} ${state.count === 1 ? 'day' : 'different days'} each ${state.period}.`;
-    if (existing && (existing.goal.period !== state.period || existing.goal.count !== state.count)) {
+    if (
+      existing &&
+      (existing.goal.period !== state.period || existing.goal.count !== state.count || isLimit(existing.goal) !== state.limit)
+    ) {
       goalHint.textContent += ' Changing the goal recalculates past stats.';
     }
   }
@@ -275,7 +312,9 @@ export const habitFormView: View = (root, [id]) => {
       name,
       emoji: state.emoji,
       color: state.color,
-      goal: { count: state.period === 'day' ? 1 : state.count, period: state.period },
+      goal: state.limit
+        ? { count: state.period === 'day' ? 0 : state.count, period: state.period, kind: 'atMost' as const }
+        : { count: state.period === 'day' ? 1 : state.count, period: state.period },
     };
     if (existing) {
       store.updateHabit(existing.id, input);
@@ -298,7 +337,7 @@ export const habitFormView: View = (root, [id]) => {
       h('div', { class: 'emoji-row' }, emojiInput, emojiPicks),
     ),
     h('div', { class: 'field' }, h('div', { class: 'label' }, 'Colour'), swatches),
-    h('div', { class: 'field' }, h('div', { class: 'label' }, 'Goal'), stepper, periodSeg, goalHint),
+    h('div', { class: 'field' }, h('div', { class: 'label' }, 'Goal'), kindSeg, stepper, periodSeg, goalHint),
     h(
       'div',
       { class: 'form-actions' },

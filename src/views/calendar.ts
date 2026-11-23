@@ -10,6 +10,7 @@ import {
   formatMonthYear,
   fromKey,
   goalText,
+  isLimit,
   isValidKey,
   periodEnd,
   periodStart,
@@ -183,11 +184,11 @@ export const calendarView: View = (root, [param]) => {
         } else {
           const we = addDays(ws, 6);
           const n = countInRange(store.checkins(single.id), ws, we < today ? we : today);
-          const met = n >= single.goal.count;
+          const { cls } = goalMark(single, n);
           grid.append(
             h(
               'div',
-              { class: `cal-week${met ? ' met' : ''}`, title: `Week of ${formatLongDay(ws)}` },
+              { class: `cal-week ${cls}`, title: `Week of ${formatLongDay(ws)}` },
               `${n}/${single.goal.count}`,
             ),
           );
@@ -207,13 +208,13 @@ export const calendarView: View = (root, [param]) => {
         h('div', { class: 'sum-row' }, h('span', null, `Days done in ${monthName}`), h('strong', null, `${n} / ${elapsed}`)),
       ];
       if (single.goal.period === 'month') {
-        const met = n >= single.goal.count;
+        const m = goalMark(single, n);
         lines.push(
           h(
             'div',
             { class: 'sum-row' },
-            h('span', null, 'Monthly goal'),
-            h('strong', { class: met ? 'met' : '' }, `${n} / ${single.goal.count}${met ? ' ✓' : ''}`),
+            h('span', null, isLimit(single.goal) ? 'Monthly limit' : 'Monthly goal'),
+            h('strong', { class: m.cls }, m.text),
           ),
         );
       }
@@ -221,13 +222,13 @@ export const calendarView: View = (root, [param]) => {
         const ys = `${month.slice(0, 4)}-01-01`;
         const ye = `${month.slice(0, 4)}-12-31`;
         const yn = countInRange(c, ys, ye < today ? ye : today);
-        const met = yn >= single.goal.count;
+        const m = goalMark(single, yn);
         lines.push(
           h(
             'div',
             { class: 'sum-row' },
             h('span', null, `${month.slice(0, 4)} so far`),
-            h('strong', { class: met ? 'met' : '' }, `${yn} / ${single.goal.count}${met ? ' ✓' : ''}`),
+            h('strong', { class: m.cls }, m.text),
           ),
         );
       }
@@ -235,7 +236,7 @@ export const calendarView: View = (root, [param]) => {
         h(
           'div',
           { class: 'card' },
-          h('h2', null, single.name, ' ', h('span', { class: 'muted' }, goalText(single.goal.count, single.goal.period))),
+          h('h2', null, single.name, ' ', h('span', { class: 'muted' }, goalText(single.goal))),
           lines,
           h('p', { class: 'small muted', style: 'margin:12px 0 0' }, 'Tap a day to mark it done or not done.'),
           h(
@@ -263,6 +264,16 @@ export const calendarView: View = (root, [param]) => {
         ),
       );
     }
+  }
+
+  /** Class + suffix for "n of the goal": green tick when a target is reached, red when over a limit. */
+  function goalMark(habit: Habit, n: number): { cls: string; text: string } {
+    if (isLimit(habit.goal)) {
+      const over = n > habit.goal.count;
+      return { cls: over ? 'over' : '', text: `${n} / ${habit.goal.count} max` };
+    }
+    const met = n >= habit.goal.count;
+    return { cls: met ? 'met' : '', text: `${n} / ${habit.goal.count}${met ? ' ✓' : ''}` };
   }
 
   function dayLabel(key: DateKey, today: DateKey) {

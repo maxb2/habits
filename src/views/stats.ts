@@ -1,12 +1,14 @@
 import type { View } from '../router';
 import { store } from '../state';
 import type { DateKey, Habit, HabitCheckins, Period, WeekStart } from '../types';
+import type { PeriodResult } from '../lib/stats';
 import {
   addDays,
   diffDays,
   formatShortDay,
   fromKey,
   goalText,
+  isLimit,
   periodLabel,
   periodTitle,
   todayKey,
@@ -50,6 +52,18 @@ function valueWithUnit(n: number, unit: string) {
   return h('span', null, String(n), ' ', h('small', null, unit));
 }
 
+/** "2 / 3 ✓", or "2 / 3 max" for a limit. */
+function progressValue(p: PeriodResult): string {
+  if (p.limit) return `${p.count} / ${p.target} max`;
+  return `${p.count} / ${p.target}${p.met ? ' ✓' : ''}`;
+}
+
+/** Progress meter; for a limit it shows how much of the allowance is used, turning red when over. */
+function meter(p: PeriodResult) {
+  const share = p.target ? p.count / p.target : p.count ? 1 : 0;
+  return h('div', { class: `meter${p.over ? ' over' : ''}` }, h('span', { style: `width:${Math.min(100, share * 100)}%` }));
+}
+
 /** Last `n` periods as a strip of small cells (met / partial / missed / before start). */
 function strip(habit: Habit, checkins: HabitCheckins, today: DateKey, weekStart: WeekStart, n: number) {
   const periods = recentPeriods(habit, checkins, today, weekStart, n);
@@ -58,7 +72,14 @@ function strip(habit: Habit, checkins: HabitCheckins, today: DateKey, weekStart:
     { class: 'strip', 'aria-hidden': 'true' },
     periods.map((p) =>
       h('span', {
-        class: p.beforeStart ? 'pre' : p.met ? 'met' : p.count > 0 ? 'partial' : '',
+        // A limit still within bounds shows as partial until its period is over.
+        class: p.beforeStart
+          ? 'pre'
+          : p.decided && p.met
+            ? 'met'
+            : p.limit
+              ? p.decided ? '' : 'partial'
+              : p.count > 0 ? 'partial' : '',
       }),
     ),
   );
@@ -84,17 +105,18 @@ export const statsView: View = (root) => {
     return;
   }
 
-  // Summary tiles
-  const doneToday = habits.filter((x) => store.checkins(x.id)[today]).length;
-  const last7 = habits.reduce((sum, x) => sum + countInRange(store.checkins(x.id), addDays(today, -6), today), 0);
+  // Summary tiles. "Done" counts habits to build; checking off a limited habit isn't progress.
+  const builds = habits.filter((x) => !isLimit(x.goal));
+  const doneToday = builds.filter((x) => store.checkins(x.id)[today]).length;
+  const last7 = builds.reduce((sum, x) => sum + countInRange(store.checkins(x.id), addDays(today, -6), today), 0);
   const metNow = habits.filter((x) => periodProgress(x, store.checkins(x.id), today, weekStart).met).length;
   root.append(
     h(
       'div',
       { class: 'tiles' },
-      tile('Today', valueWithUnit(doneToday, `/ ${habits.length}`), 'habits done'),
+      tile('Today', valueWithUnit(doneToday, `/ ${builds.length}`), 'habits done'),
       tile('Last 7 days', String(last7), plural(last7, 'check-in').replace(/^\d+ /, '')),
-      tile('Goals met', valueWithUnit(metNow, `/ ${habits.length}`), 'this period'),
+      tile('On track', valueWithUnit(metNow, `/ ${habits.length}`), 'this period'),
     ),
   );
 
@@ -118,7 +140,7 @@ export const statsView: View = (root) => {
             'span',
             { class: 'text' },
             h('div', { class: 'name' }, habit.name),
-            h('div', { class: 'goal' }, goalText(habit.goal.count, period)),
+            h('div', { class: 'goal' }, goalText(habit.goal)),
           ),
           svgIcon(ICONS.chevronRight),
         ),
@@ -129,13 +151,9 @@ export const statsView: View = (root) => {
                 'div',
                 { class: 'progress-line' },
                 h('span', null, `This ${period}`),
-                h('span', null, `${p.count} / ${p.target}${p.met ? ' ✓' : ''}`),
+                h('span', { class: p.over ? 'over' : '' }, progressValue(p)),
               ),
-              h(
-                'div',
-                { class: 'meter' },
-                h('span', { style: `width:${Math.min(100, (p.count / p.target) * 100)}%` }),
-              ),
+              meter(p),
             ],
         strip(habit, c, today, weekStart, stripN),
         h(
@@ -164,7 +182,7 @@ export const statsView: View = (root) => {
               'a',
               { class: 'row-main', href: `#/stats/${encodeURIComponent(x.id)}`, style: hueStyle(x.color) },
               avatar(x),
-              h('span', { class: 'text' }, h('div', { class: 'name' }, x.name), h('div', { class: 'goal' }, goalText(x.goal.count, x.goal.period))),
+              h('span', { class: 'text' }, h('div', { class: 'name' }, x.name), h('div', { class: 'goal' }, goalText(x.goal))),
             ),
           ),
         ),
@@ -173,9 +191,11 @@ export const statsView: View = (root) => {
   }
 };
 
-/** Bar-chart grain: daily habits are summarised per week (goal 7), others per goal period. */
+/** Bar-chart grain: daily habits are summarised per week (goal 7, or limit 0), others per goal period. */
 function chartSpec(habit: Habit): { habit: Habit; period: Period } {
-  if (habit.goal.period === 'day') return { habit: { ...habit, goal: { count: 7, period: 'week' } }, period: 'week' };
+  if (habit.goal.period === 'day') {
+    return { habit: { ...habit, goal: { ...habit.goal, count: habit.goal.count * 7, period: 'week' } }, period: 'week' };
+  }
   return { habit, period: habit.goal.period };
 }
 
@@ -202,7 +222,7 @@ export const habitStatsView: View = (root, [id], { width }) => {
       'header',
       { class: 'page-head' },
       avatar(habit),
-      h('h1', null, habit.name, h('span', { class: 'sub' }, goalText(habit.goal.count, period) + (habit.archived ? ' · archived' : ''))),
+      h('h1', null, habit.name, h('span', { class: 'sub' }, goalText(habit.goal) + (habit.archived ? ' · archived' : ''))),
       h('a', { class: 'btn', href: `#/habits/${encodeURIComponent(habit.id)}` }, 'Edit'),
     ),
   );
@@ -227,14 +247,21 @@ export const habitStatsView: View = (root, [id], { width }) => {
   if (period !== 'day') {
     const p = periodProgress(habit, c, today, weekStart);
     const daysLeft = diffDays(today, p.end);
-    const need = Math.max(0, p.target - p.count);
+    const left = plural(daysLeft + 1, 'day');
+    const status = p.limit
+      ? p.over
+        ? `Over the limit by ${p.count - p.target}`
+        : `${p.target - p.count} more allowed · ${left} left`
+      : p.met
+        ? 'Goal met ✓'
+        : `${p.target - p.count} more to go · ${left} left`;
     wrap.append(
       h(
         'div',
         { class: 'card' },
         h('h2', null, `This ${period} `, h('span', { class: 'muted' }, periodTitle(period, p.start, weekStart))),
-        h('div', { class: 'progress-line' }, h('span', null, p.met ? 'Goal met ✓' : `${need} more to go · ${plural(daysLeft + 1, 'day')} left`), h('span', null, `${p.count} / ${p.target}`)),
-        h('div', { class: 'meter' }, h('span', { style: `width:${Math.min(100, (p.count / p.target) * 100)}%` })),
+        h('div', { class: 'progress-line' }, h('span', { class: p.over ? 'over' : '' }, status), h('span', null, progressValue(p))),
+        meter(p),
       ),
     );
   }
@@ -269,12 +296,16 @@ export const habitStatsView: View = (root, [id], { width }) => {
   const n = spec.period === 'year' ? Math.min(10, Math.max(3, yearsSince)) : Math.min(12, Math.max(6, sinceStart));
   const periods = recentPeriods(spec.habit, c, today, weekStart, n);
   const target = spec.habit.goal.count;
+  const limit = isLimit(habit.goal);
+  const goalWord = limit ? 'Limit' : 'Goal';
   const bars = periods.map((p) => ({
     label: spec.period === 'week' ? formatShortDay(p.start).replace(/\s+/, ' ') : periodLabel(spec.period, p.start),
     value: p.count,
     muted: !p.met,
     skip: p.beforeStart,
-    tip: `${periodTitle(spec.period, p.start, weekStart)}: ${p.count} of ${target}${p.met ? ' ✓' : p.current ? ' (so far)' : ''}`,
+    tip: `${periodTitle(spec.period, p.start, weekStart)}: ${p.count} ${limit ? 'of max' : 'of'} ${target}${
+      !p.decided ? ' (so far)' : p.met ? ' ✓' : limit ? ' · over' : ''
+    }`,
   }));
   wrap.append(
     h(
@@ -285,14 +316,15 @@ export const habitStatsView: View = (root, [id], { width }) => {
         bars,
         width: cardInner,
         goal: target,
-        ariaLabel: `Days done per ${spec.period} for the last ${n} ${spec.period}s, goal ${target}`,
+        ariaLabel: `Days done per ${spec.period} for the last ${n} ${spec.period}s, ${goalWord.toLowerCase()} ${target}`,
       }),
       h(
         'div',
         { class: 'key' },
-        h('span', null, h('i', { class: 'done' }), 'Goal met'),
-        h('span', null, h('i', { class: 'unmet' }), 'Not met'),
-        h('span', null, h('i', { class: 'line' }), `Goal (${target})`),
+        h('span', null, h('i', { class: 'done' }), limit ? 'Within limit' : 'Goal met'),
+        h('span', null, h('i', { class: 'unmet' }), limit ? 'Over limit' : 'Not met'),
+        // A limit of 0 sits on the baseline, so the chart draws no line for it.
+        target ? h('span', null, h('i', { class: 'line' }), `${goalWord} (${target})`) : null,
       ),
       h(
         'details',
@@ -301,7 +333,7 @@ export const habitStatsView: View = (root, [id], { width }) => {
         h(
           'table',
           { class: 'data-table' },
-          h('thead', null, h('tr', null, h('th', null, spec.period[0]!.toUpperCase() + spec.period.slice(1)), h('th', { class: 'num' }, 'Days'), h('th', { class: 'num' }, 'Goal'))),
+          h('thead', null, h('tr', null, h('th', null, spec.period[0]!.toUpperCase() + spec.period.slice(1)), h('th', { class: 'num' }, 'Days'), h('th', { class: 'num' }, goalWord))),
           h(
             'tbody',
             null,
@@ -314,7 +346,7 @@ export const habitStatsView: View = (root, [id], { width }) => {
                   null,
                   h('td', null, periodTitle(spec.period, p.start, weekStart)),
                   h('td', { class: 'num' }, String(p.count)),
-                  h('td', { class: 'num' }, p.met ? '✓' : p.current ? '…' : '✗'),
+                  h('td', { class: 'num' }, !p.decided ? '…' : p.met ? '✓' : '✗'),
                 ),
               ),
           ),

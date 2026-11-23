@@ -4,6 +4,7 @@ import {
   addDays,
   daysInRange,
   diffDays,
+  goalText,
   isValidKey,
   nextPeriodStart,
   periodEnd,
@@ -108,5 +109,15 @@ describe('addMonths', () => {
     expect(addMonths('2026-12-15', 1)).toBe('2027-01-01');
     expect(addMonths('2026-01-15', -1)).toBe('2025-12-01');
     expect(addMonths('2026-03-31', -13)).toBe('2025-02-01');
+  });
+});
+
+describe('goalText', () => {
+  it('describes targets and limits', () => {
+    expect(goalText({ count: 1, period: 'day' })).toBe('Every day');
+    expect(goalText({ count: 3, period: 'week' })).toBe('3× per week');
+    expect(goalText({ count: 2, period: 'month', kind: 'atMost' })).toBe('At most 2× per month');
+    expect(goalText({ count: 0, period: 'day', kind: 'atMost' })).toBe('Never');
+    expect(goalText({ count: 0, period: 'week', kind: 'atMost' })).toBe('None per week');
   });
 });

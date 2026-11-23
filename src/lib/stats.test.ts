@@ -130,3 +130,44 @@ describe('period lists', () => {
     expect(periodProgress(h, c, TODAY, 1).count).toBe(0);
   });
 });
+
+describe('limit goals (atMost)', () => {
+  const limit = (count: number, period: Habit['goal']['period'], createdAt?: string) =>
+    habit({ count, period, kind: 'atMost' }, createdAt);
+
+  it('current period within the limit is met but undecided', () => {
+    const p = periodProgress(limit(2, 'week'), days(TODAY), TODAY, 1);
+    expect(p).toMatchObject({ count: 1, target: 2, limit: true, met: true, over: false, decided: false });
+  });
+
+  it('clean periods build a streak; the in-progress one does not count yet', () => {
+    // Weeks (Mon start) from Oct 26 to Nov 16 are finished, Nov 23 is current.
+    const h = limit(2, 'week');
+    expect(currentStreak(h, {}, TODAY, 1)).toBe(4);
+    expect(completion(h, {}, TODAY, 1)).toEqual({ met: 4, total: 4, rate: 1 });
+  });
+
+  it('going over breaks streaks', () => {
+    const h = limit(2, 'week');
+    const c = days('2026-11-10', '2026-11-11', '2026-11-12'); // 3 in the week of Nov 9
+    expect(currentStreak(h, c, TODAY, 1)).toBe(1);
+    expect(bestStreak(h, c, TODAY, 1)).toBe(2);
+    expect(completion(h, c, TODAY, 1)).toEqual({ met: 3, total: 4, rate: 3 / 4 });
+  });
+
+  it('going over in the current period is decided at once', () => {
+    const h = limit(0, 'week');
+    const p = periodProgress(h, days(TODAY), TODAY, 1);
+    expect(p).toMatchObject({ met: false, over: true, decided: true });
+    expect(currentStreak(h, days(TODAY), TODAY, 1)).toBe(0);
+    expect(completion(h, days(TODAY), TODAY, 1)).toEqual({ met: 4, total: 5, rate: 4 / 5 });
+  });
+
+  it('daily "never" counts clean days', () => {
+    const h = limit(0, 'day', '2026-11-20');
+    const c = days('2026-11-21');
+    expect(currentStreak(h, c, TODAY, 1)).toBe(1); // Nov 22; today still in progress
+    expect(bestStreak(h, c, TODAY, 1)).toBe(1);
+    expect(currentStreak(h, { ...c, [TODAY]: 1 }, TODAY, 1)).toBe(0);
+  });
+});

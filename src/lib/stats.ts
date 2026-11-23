@@ -1,12 +1,22 @@
 import type { DateKey, Habit, HabitCheckins, Period, WeekStart } from '../types';
-import { addDays, nextPeriodStart, periodEnd, periodStart, prevPeriodStart } from './dates';
+import { addDays, isLimit, nextPeriodStart, periodEnd, periodStart, prevPeriodStart } from './dates';
 
 export interface PeriodResult {
   start: DateKey;
   end: DateKey;
   count: number;
+  /** The goal count: a target to reach, or a limit to stay within (see `limit`). */
   target: number;
+  limit: boolean;
+  /** Target reached, or (for a limit) still within it. */
   met: boolean;
+  /** Limit only: went over. */
+  over: boolean;
+  /**
+   * The outcome can no longer change: the period is over, or the current one has already
+   * reached its target / gone over its limit. Streaks and rates only count decided periods.
+   */
+  decided: boolean;
   /** True for the period containing "today". */
   current: boolean;
 }
@@ -33,10 +43,13 @@ function result(
   today: DateKey,
 ): PeriodResult {
   const { period, count: target } = habit.goal;
+  const limit = isLimit(habit.goal);
   const end = periodEnd(period, start, weekStart);
   // Only count up to today; future days can't be checked anyway.
   const count = countInRange(checkins, start, end < today ? end : today);
-  return { start, end, count, target, met: count >= target, current: start <= today && today <= end };
+  const met = limit ? count <= target : count >= target;
+  const current = start <= today && today <= end;
+  return { start, end, count, target, limit, met, over: limit && !met, decided: !current || met !== limit, current };
 }
 
 export function periodProgress(
@@ -89,7 +102,9 @@ export function recentPeriods(
 
 /**
  * Consecutive goal periods met, counting back from now.
- * The current period adds to the streak once met, and never breaks it while still in progress.
+ * The current period adds to the streak once decided (target reached), and never breaks it while
+ * still in progress. For limits that means the current period only counts once it is over, but
+ * going over the limit breaks the streak straight away.
  */
 export function currentStreak(
   habit: Habit,
@@ -101,8 +116,8 @@ export function currentStreak(
   let streak = 0;
   for (let i = periods.length - 1; i >= 0; i--) {
     const p = periods[i]!;
+    if (!p.decided) continue;
     if (p.met) streak++;
-    else if (p.current) continue;
     else break;
   }
   return streak;
@@ -117,10 +132,11 @@ export function bestStreak(
   let best = 0;
   let run = 0;
   for (const p of allPeriods(habit, checkins, today, weekStart)) {
+    if (!p.decided) continue;
     if (p.met) {
       run++;
       if (run > best) best = run;
-    } else if (!p.current) {
+    } else {
       run = 0;
     }
   }
@@ -135,8 +151,8 @@ export interface Completion {
 }
 
 /**
- * Share of periods where the goal was met. The current period is included only once met,
- * so an in-progress week doesn't drag the rate down. Optionally limited to the last `n` periods.
+ * Share of periods where the goal was met. The current period is included only once decided,
+ * so an in-progress week doesn't drag the rate down (or, for a limit, prop it up). Optionally limited to the last `n` periods.
  */
 export function completion(
   habit: Habit,
@@ -147,7 +163,7 @@ export function completion(
 ): Completion {
   let periods = allPeriods(habit, checkins, today, weekStart);
   if (n !== undefined) periods = periods.slice(-n);
-  const counted = periods.filter((p) => !p.current || p.met);
+  const counted = periods.filter((p) => p.decided);
   const met = counted.filter((p) => p.met).length;
   return { met, total: counted.length, rate: counted.length ? met / counted.length : null };
 }

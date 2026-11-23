@@ -2,7 +2,7 @@ import type { View } from '../router';
 import { navigate } from '../router';
 import { store } from '../state';
 import type { DateKey, Habit } from '../types';
-import { addDays, diffDays, formatLongDay, isValidKey, periodTitle, todayKey } from '../lib/dates';
+import { addDays, diffDays, formatLongDay, isLimit, isValidKey, periodTitle, todayKey } from '../lib/dates';
 import { currentStreak, periodProgress, streakUnit } from '../lib/stats';
 import { h, svgIcon } from '../ui/dom';
 import { ICONS } from '../ui/icons';
@@ -15,19 +15,25 @@ function dayTitle(day: DateKey, today: DateKey): string {
   return formatLongDay(day).split(',')[0]!; // weekday name
 }
 
-/** Text + "met" flag describing progress toward the habit's goal for the period containing `day`. */
-function progressText(habit: Habit, day: DateKey, today: DateKey) {
+/** Text + class describing progress toward the habit's goal for the period containing `day`. */
+function progressText(habit: Habit, day: DateKey, today: DateKey): { text: string; cls: string } {
   const { weekStart } = store.data.settings;
   const p = periodProgress(habit, store.checkins(habit.id), day, weekStart);
   const { period } = habit.goal;
-  if (period === 'day') return null;
+  if (period === 'day') {
+    if (!p.limit) return { text: 'Daily', cls: '' };
+    return p.over ? { text: 'Over limit', cls: 'over' } : { text: 'Avoid', cls: '' };
+  }
   const when =
     p.current && day === today
       ? `this ${period}`
       : period === 'week'
         ? `wk of ${periodTitle('week', p.start, weekStart).split(' – ')[0]}`
         : periodTitle(period, p.start, weekStart);
-  return { text: `${p.count}/${p.target} ${when}`, met: p.met };
+  if (p.limit) {
+    return { text: `${p.count}/${p.target} max ${when}${p.over ? ' · over' : ''}`, cls: p.over ? 'over' : '' };
+  }
+  return { text: `${p.count}/${p.target} ${when}${p.met ? ' ✓' : ''}`, cls: p.met ? 'met' : '' };
 }
 
 export const todayView: View = (root, [param]) => {
@@ -108,8 +114,7 @@ export const todayView: View = (root, [param]) => {
     card.el.setAttribute('aria-checked', String(done));
     const parts: (HTMLElement | string)[] = [];
     const prog = progressText(habit, day, today);
-    if (prog) parts.push(h('span', { class: prog.met ? 'met' : '' }, prog.text + (prog.met ? ' ✓' : '')));
-    else parts.push(h('span', null, 'Daily'));
+    parts.push(h('span', { class: prog.cls }, prog.text));
     if (day === today) {
       const streak = currentStreak(habit, store.checkins(habit.id), today, store.data.settings.weekStart);
       if (streak > 0) {
@@ -154,13 +159,16 @@ export const todayView: View = (root, [param]) => {
         list.append(card.el);
       }
     }
+    // The summary counts habits to build; checking off a limited habit isn't progress.
+    const builds = habits.filter((x) => !isLimit(x.goal));
     let done = 0;
     for (const habit of habits) {
       update(habit, cards.get(habit.id)!);
-      if (store.checkins(habit.id)[day]) done++;
+      if (!isLimit(habit.goal) && store.checkins(habit.id)[day]) done++;
     }
-    summaryText.textContent = `${done} of ${habits.length} done`;
-    summaryBar.style.width = `${(done / habits.length) * 100}%`;
+    summary.hidden = !builds.length;
+    summaryText.textContent = `${done} of ${builds.length} done`;
+    summaryBar.style.width = `${builds.length ? (done / builds.length) * 100 : 0}%`;
   }
 
   render();

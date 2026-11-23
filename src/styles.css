@@ -1148,3 +1148,19 @@ details.table-view summary {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Goal type (build / limit) toggle sits above the count stepper. */
+.kind-seg {
+  margin-bottom: 10px;
+}
+
+/* Limit goals that have gone over. */
+.meta .over,
+.sum-row strong.over,
+.cal-week.over {
+  color: var(--danger);
+  font-weight: 600;
+}
+.meter.over > span {
+  background: var(--danger);
+}

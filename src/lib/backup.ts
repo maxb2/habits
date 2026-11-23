@@ -1,6 +1,6 @@
 import { DATA_VERSION, PERIODS } from '../types';
 import type { AppData, Habit, HabitCheckins, Settings } from '../types';
-import { isValidKey, maxGoalCount } from './dates';
+import { goalCountRange, isValidKey } from './dates';
 
 export class DataError extends Error {}
 
@@ -27,8 +27,11 @@ function validateHabit(raw: unknown, i: number): Habit {
     throw new DataError(`${where} has an invalid goal period`);
   }
   const p = period as Habit['goal']['period'];
+  const kind = goal.kind ?? 'atLeast';
+  if (kind !== 'atLeast' && kind !== 'atMost') throw new DataError(`${where} has an invalid goal type`);
+  const range = goalCountRange(p, kind === 'atMost');
   const count = goal.count;
-  if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > maxGoalCount(p)) {
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < range.min || count > range.max) {
     throw new DataError(`${where} has an invalid goal count`);
   }
   if (!isValidKey(createdAt)) throw new DataError(`${where} has an invalid creation date`);
@@ -37,7 +40,7 @@ function validateHabit(raw: unknown, i: number): Habit {
     name: name.trim(),
     emoji: typeof emoji === 'string' ? emoji : '',
     color: typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color) ? color : '#0f766e',
-    goal: { count, period: p },
+    goal: kind === 'atMost' ? { count, period: p, kind } : { count, period: p },
     createdAt,
     archived: archived === true,
     order: typeof order === 'number' && Number.isFinite(order) ? order : i,

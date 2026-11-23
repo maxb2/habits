@@ -51,6 +51,20 @@ describe('export/import', () => {
     expect(bad({ goal: { count: 2, period: 'day' } }).ok).toBe(false);
     expect(bad({ goal: { count: 1, period: 'fortnight' } }).ok).toBe(false);
     expect(bad({ createdAt: '2026-02-30' }).ok).toBe(false);
+    expect(bad({ goal: { count: 0, period: 'week' } }).ok).toBe(false);
+    expect(bad({ goal: { count: 2, period: 'week', kind: 'sometimes' } }).ok).toBe(false);
+    expect(bad({ goal: { count: 7, period: 'week', kind: 'atMost' } }).ok).toBe(false);
+    expect(bad({ goal: { count: 1, period: 'day', kind: 'atMost' } }).ok).toBe(false);
+  });
+
+  it('keeps limit goals and normalises explicit atLeast', () => {
+    const withGoal = (goal: object) =>
+      parseImport(JSON.stringify({ ...sample, habits: [{ ...sample.habits[0], goal }] }));
+    const limit = { count: 0, period: 'day', kind: 'atMost' };
+    const r = withGoal(limit);
+    expect(r.ok && r.data.habits[0]!.goal).toEqual(limit);
+    const r2 = withGoal({ count: 3, period: 'week', kind: 'atLeast' });
+    expect(r2.ok && r2.data.habits[0]!.goal).toEqual({ count: 3, period: 'week' });
   });
 
   it('rejects duplicate ids and bad dates', () => {

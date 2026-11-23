@@ -5,10 +5,18 @@ export type Period = 'day' | 'week' | 'month' | 'year';
 
 export const PERIODS: readonly Period[] = ['day', 'week', 'month', 'year'];
 
+/**
+ * `atLeast` (the default): do it on at least `count` days per period.
+ * `atMost`: a limit — do it on no more than `count` days per period (0 = avoid entirely).
+ */
+export type GoalKind = 'atLeast' | 'atMost';
+
 export interface Goal {
-  /** How many days within each period the habit should be done. */
+  /** Days within each period: the target for `atLeast`, the limit for `atMost`. */
   count: number;
   period: Period;
+  /** Omitted means `atLeast`, so data saved before limits existed stays valid. */
+  kind?: GoalKind;
 }
 
 export interface Habit {
